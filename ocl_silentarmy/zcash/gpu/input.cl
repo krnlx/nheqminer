@@ -636,8 +636,7 @@ void kernel_round8(__global char *ht_src, __global char *ht_dst,
 
 uint expand_ref(__global char *ht, uint xi_offset, uint row, uint slot)
 {
-    return *(__global uint *)(ht + row * NR_SLOTS * SLOT_LEN +
-	    slot * SLOT_LEN + xi_offset - 4);
+    return *(__global uint *)(ht + row * NR_SLOTS * SLOT_LEN + slot * SLOT_LEN + xi_offset - 4);
 }
 
 void expand_refs(__global uint *ins, uint nr_inputs, __global char **htabs,

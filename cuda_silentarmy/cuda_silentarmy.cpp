@@ -14,7 +14,7 @@ cuda_sa_solver::cuda_sa_solver(int platf_id, int dev_id)
 
 	// todo: determine default values for various GPUs here
 	threadsperblock = 64;
-	blocks = m_sm_count * 32;
+	blocks = m_sm_count * 7;
 }
 
 std::string cuda_sa_solver::getdevinfo()

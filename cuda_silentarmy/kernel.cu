@@ -397,7 +397,7 @@ __device__ uint xor_and_store(uint round, char *ht_dst, uint row, uint slot_a, u
 ** Execute one Equihash round. Read from ht_src, XOR colliding pairs of Xi,
 ** store them in ht_dst.
 */
-__device__ void equihash_round(uint size, uint round, char *ht_src, char *ht_dst, uint *debug)
+__device__ void equihash_round(uint round, char *ht_src, char *ht_dst, uint *debug)
 {
 	uint                tid = blockIdx.x * blockDim.x + threadIdx.x;
 	char				*p;
@@ -406,6 +406,7 @@ __device__ void equihash_round(uint size, uint round, char *ht_src, char *ht_dst
 	uint				dropped_stor = 0;
 	ulong				*a, *b;
 	uint				xi_offset;
+	static uint			size = NR_ROWS;
 	static uint			stride = NR_SLOTS * SLOT_LEN;
 	xi_offset = (8 + ((round - 1) / 2) * 4);
 
@@ -435,57 +436,49 @@ __device__ void equihash_round(uint size, uint round, char *ht_src, char *ht_dst
 }
 
 __global__ void 
-__launch_bounds__(64, 1)
-kernel_round1(uint size, char *ht_src, char *ht_dst, uint *debug)
+kernel_round1(char *ht_src, char *ht_dst, uint *debug)
 {
-	equihash_round(size, 1, ht_src, ht_dst, debug);
+	equihash_round(1, ht_src, ht_dst, debug);
 }
 
 __global__ void 
-__launch_bounds__(64, 1)
-kernel_round2(uint size, char *ht_src, char *ht_dst, uint *debug)
+kernel_round2(char *ht_src, char *ht_dst, uint *debug)
 {
-	equihash_round(size, 2, ht_src, ht_dst, debug);
+	equihash_round(2, ht_src, ht_dst, debug);
 }
 __global__ void
-__launch_bounds__(64, 1)
-kernel_round3(uint size, char *ht_src, char *ht_dst, uint *debug)
+kernel_round3(char *ht_src, char *ht_dst, uint *debug)
 {
-	equihash_round(size, 3, ht_src, ht_dst, debug);
+	equihash_round(3, ht_src, ht_dst, debug);
 }
 
 __global__ void
-__launch_bounds__(64, 1)
-kernel_round4(uint size, char *ht_src, char *ht_dst, uint *debug)
+kernel_round4(char *ht_src, char *ht_dst, uint *debug)
 {
-	equihash_round(size, 4, ht_src, ht_dst, debug);
+	equihash_round(4, ht_src, ht_dst, debug);
 }
 __global__ void
-__launch_bounds__(64, 1)
-kernel_round5(uint size, char *ht_src, char *ht_dst, uint *debug)
+kernel_round5(char *ht_src, char *ht_dst, uint *debug)
 {
-	equihash_round(size, 5, ht_src, ht_dst, debug);
+	equihash_round(5, ht_src, ht_dst, debug);
 }
 __global__ void
-__launch_bounds__(64, 1)
-kernel_round6(uint size, char *ht_src, char *ht_dst, uint *debug)
+kernel_round6(char *ht_src, char *ht_dst, uint *debug)
 {
-	equihash_round(size, 6, ht_src, ht_dst, debug);
+	equihash_round(6, ht_src, ht_dst, debug);
 }
 __global__ void
-__launch_bounds__(64, 1)
-kernel_round7(uint size, char *ht_src, char *ht_dst, uint *debug)
+kernel_round7(char *ht_src, char *ht_dst, uint *debug)
 {
-	equihash_round(size, 7, ht_src, ht_dst, debug);
+	equihash_round(7, ht_src, ht_dst, debug);
 }
 
 // kernel_round8 takes an extra argument, "sols"
 __global__ void
-__launch_bounds__(64, 1)
-kernel_round8(uint size, char *ht_src, char *ht_dst, uint *debug, sols_t *sols)
+kernel_round8(char *ht_src, char *ht_dst, uint *debug, sols_t *sols)
 {
 	uint                tid = blockIdx.x * blockDim.x + threadIdx.x;
-	equihash_round(size, 8, ht_src, ht_dst, debug);
+	equihash_round(8, ht_src, ht_dst, debug);
 	if (!tid)
 		sols->nr = sols->likely_invalids = 0;
 }
@@ -789,28 +782,28 @@ void sa_cuda_context::solve(const char * tequihash_header, unsigned int tequihas
 			kernel_round0<<<totalblocks, threadsperblock>>>((ulong*)buf_blake_st, miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
 			break;
 		case 1:
-			kernel_round1<<<totalblocks, threadsperblock>>>(NR_ROWS, miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
+			kernel_round1<<<totalblocks, threadsperblock>>>(miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
 			break;
 		case 2:
-			kernel_round2<<< totalblocks, threadsperblock>>>(NR_ROWS, miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
+			kernel_round2<<< totalblocks, threadsperblock>>>(miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
 			break;
 		case 3:
-			kernel_round3<<<totalblocks, threadsperblock>>>(NR_ROWS, miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
+			kernel_round3<<<totalblocks, threadsperblock>>>(miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
 			break;
 		case 4:
-			kernel_round4<<<totalblocks, threadsperblock>>>(NR_ROWS, miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
+			kernel_round4<<<totalblocks, threadsperblock>>>(miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
 			break;
 		case 5:
-			kernel_round5<<<totalblocks, threadsperblock>>>(NR_ROWS, miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
+			kernel_round5<<<totalblocks, threadsperblock>>>(miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
 			break;
 		case 6:
-			kernel_round6<<<totalblocks, threadsperblock>>>(NR_ROWS, miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
+			kernel_round6<<<totalblocks, threadsperblock>>>(miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
 			break;
 		case 7:
-			kernel_round7<<<totalblocks, threadsperblock>>>(NR_ROWS, miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
+			kernel_round7<<<totalblocks, threadsperblock>>>(miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg);
 			break;
 		case 8:
-			kernel_round8<<<totalblocks, threadsperblock>>>(NR_ROWS, miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg, (sols_t*)miner->buf_sols);
+			kernel_round8<<<totalblocks, threadsperblock>>>(miner->buf_ht[(round - 1) & 1], miner->buf_ht[round & 1], (uint*)miner->buf_dbg, (sols_t*)miner->buf_sols);
 			break;
 		}
 		if (cancelf()) return;
