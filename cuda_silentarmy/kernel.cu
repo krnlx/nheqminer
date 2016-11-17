@@ -110,9 +110,7 @@ uint ht_store(uint round, __global char *ht, uint i,
 {
     uint    row;
     __global char       *p;
-   uint                cnt;
-   uint                tid = get_global_id(0);
-uint                tlid = get_local_id(0);
+    uint                cnt;
 #if NR_ROWS_LOG == 16
     if (!(round % 2))
 	row = (xi0 & 0xffff);
@@ -162,40 +160,19 @@ uint                tlid = get_local_id(0);
 	atomic_sub(rowCounters + rowIdx, 1 << rowOffset);
 	return 1;
       }
-    __global char       *pp = p + cnt * SLOT_LEN;
-    p = pp + xi_offset_for_round(round);
+    p += cnt * SLOT_LEN + xi_offset_for_round(round);
     // store "i" (always 4 bytes before Xi)
+    *(__global uint *)(p - 4) = i;
     if (round == 0 || round == 1)
       {
 	// store 24 bytes
-	ulong2 store0;
-	ulong2 store1;
-	store0.x=(ulong)i  | (ulong)i << 32;
-	store0.y=xi0;
-	*(__global ulong2 *)(pp)=store0;
-	store1.x=xi1;
-	store1.y=xi2;
-	*(__global ulong2 *)(pp+16)=store1;
-	
-/*
-	ulong2 store;
-	store.x=xi1;
-	store.y=xi2;
-	*(__global ulong2 *)(p + 8)=store;	
 	*(__global ulong *)(p + 0) = xi0;
-	*(__global uint *)(p - 4) = i;
-*/
-
+	*(__global ulong *)(p + 8) = xi1;
+	*(__global ulong *)(p + 16) = xi2;
       }
     else if (round == 2)
       {
 	// store 20 bytes
-/*
-	*(__global ulong *)(p - 4) = ((ulong)i) | (xi0 << 32);
-	*(__global ulong *)(p + 4) = (xi0 >> 32) | (xi1 << 32);
-	*(__global ulong *)(p + 12) = (xi1 >> 32) | (xi2 << 32);
-*/
-	*(__global uint *)(p - 4) = i;
 	*(__global uint *)(p + 0) = xi0;
 	*(__global ulong *)(p + 4) = (xi0 >> 32) | (xi1 << 32);
 	*(__global ulong *)(p + 12) = (xi1 >> 32) | (xi2 << 32);
@@ -203,13 +180,6 @@ uint                tlid = get_local_id(0);
     else if (round == 3)
       {
 	// store 16 bytes
-	//8 byte align	
-/*
-	*(__global ulong *)(p - 4) = ((ulong)i) | (xi0 << 32);
-	*(__global ulong *)(p + 4) = (xi0 >> 32) | (xi1 << 32);
-	*(__global uint *)(p + 12) = (xi1 >> 32);
-*/
-	*(__global uint *)(p - 4) = i;
 	*(__global uint *)(p + 0) = xi0;
 	*(__global ulong *)(p + 4) = (xi0 >> 32) | (xi1 << 32);
 	*(__global uint *)(p + 12) = (xi1 >> 32);
@@ -217,50 +187,29 @@ uint                tlid = get_local_id(0);
     else if (round == 4)
       {
 	// store 16 bytes
-
-	ulong2 store;
-        store.x=xi0;
-        store.y=xi1;
-        *(__global ulong2 *)(p + 0) = store;
-	*(__global uint *)(p - 4) = i;
-
-/*
-	*(__global uint *)(p - 4) = i;
 	*(__global ulong *)(p + 0) = xi0;
 	*(__global ulong *)(p + 8) = xi1;
-*/
       }
     else if (round == 5)
       {
 	// store 12 bytes
-	*(__global uint *)(p - 4) = i;
 	*(__global ulong *)(p + 0) = xi0;
 	*(__global uint *)(p + 8) = xi1;
       }
     else if (round == 6 || round == 7)
       {
 	// store 8 bytes
-
-	*(__global ulong *)(p - 4) = ((ulong)i) | (xi0 << 32);
-	*(__global uint *)(p + 4) = (xi0 >> 32);
-
-/*
-	*(__global uint *)(p - 4) = i;
 	*(__global uint *)(p + 0) = xi0;
 	*(__global uint *)(p + 4) = (xi0 >> 32);
-*/	
       }
     else if (round == 8)
       {
-	//4 byte align
-	*(__global uint *)(p - 4) = i;
 	// store 4 bytes
 	*(__global uint *)(p + 0) = xi0;
-
       }
-
     return 0;
 }
+
 
 
 #define rotate(a, bits) ((a) << (bits)) | ((a) >> (64 - (bits)))
