@@ -95,6 +95,7 @@ __constant__ ulong blake_iv[] =
 #define atomic_add(A,X) atomicAdd(A,X)
 #define atomic_inc(A) atomic_add(A,1)
 #define atomic_sub(A,X) atomicSub(A,X)
+#define atomic_dec(A) atomic_sub(A,1)
 
 __global__
 void kernel_init_ht(__global char *ht, __global uint *rowCounters)
@@ -515,33 +516,36 @@ uint xor_and_store(uint round, __global char *ht_dst, uint row,
 */
 __device__
 void equihash_round(uint round,
-	__global char *ht_src,
-	__global char *ht_dst,
-	__global uint *debug,
-	 uchar *first_words_data,
-	 uint *collisionsData,
-	 uint *collisionsNum,
-	__global uint *rowCountersSrc,
-	__global uint *rowCountersDst)
+  __global char *ht_src,
+  __global char *ht_dst,
+  __global uint *debug,
+   uchar *first_words_data,
+   uint *collisionsData,
+   uint *collisionsNum,
+  __global uint *rowCountersSrc,
+  __global uint *rowCountersDst,
+  uint threadsPerRow)
 {
-    uint		tid = get_global_id(0);
-    uint		tlid = get_local_id(0);
-    __global char	*p;
-    uint		cnt;
-    uchar	*first_words = &first_words_data[(NR_SLOTS)*tlid];
-    uchar		mask;
-    uint		i, j;
+    uint globalTid = get_global_id(0) / threadsPerRow;
+    uint localTid = get_local_id(0) / threadsPerRow;
+    uint localGroupId = get_local_id(0) % threadsPerRow;
+    uchar *first_words = &first_words_data[NR_SLOTS*localTid];
+    
+    __global char *p;
+    uint    cnt;
+    uchar   mask;
+    uint    i, j;
     // NR_SLOTS is already oversized (by a factor of OVERHEAD), but we want to
     // make it even larger
-    uint		n;
-    uint		dropped_coll = 0;
-    uint		dropped_stor = 0;
-    __global ulong	*a, *b;
-    uint		xi_offset;
+    uint    n;
+    uint    dropped_coll = 0;
+    uint    dropped_stor = 0;
+    __global ulong  *a, *b;
+    uint    xi_offset;
     // read first words of Xi from the previous (round - 1) hash table
     xi_offset = xi_offset_for_round(round - 1);
     // the mask is also computed to read data from the previous round
-#if NR_ROWS_LOG == 16
+#if NR_ROWS_LOG <= 16
     mask = ((!(round % 2)) ? 0x0f : 0xf0);
 #elif NR_ROWS_LOG == 18
     mask = ((!(round % 2)) ? 0x03 : 0x30);
@@ -551,102 +555,67 @@ void equihash_round(uint round,
     mask = 0; /* we can vastly simplify the code below */
 #else
 #error "unsupported NR_ROWS_LOG"
-#endif
-    uint thCollNum = 0;
-    *collisionsNum = 0;
-    //barrier(CLK_LOCAL_MEM_FENCE);
-    p = (ht_src + tid * NR_SLOTS * SLOT_LEN);
+#endif    
+    
+  for (uint chunk = 0; chunk < threadsPerRow; chunk++) {
+    uint tid = globalTid + NR_ROWS/threadsPerRow*chunk;
+    uint gid = tid & ~(get_local_size(0) / threadsPerRow - 1);
+//   for (uint tid = get_global_id(0)/threadsPerRow; tid < NR_ROWS; tid += get_global_size(0)/threadsPerRow) {
+    
     uint rowIdx = tid/ROWS_PER_UINT;
     uint rowOffset = BITS_PER_ROW*(tid%ROWS_PER_UINT);
     cnt = (rowCountersSrc[rowIdx] >> rowOffset) & ROW_MASK;
     cnt = min(cnt, (uint)NR_SLOTS); // handle possible overflow in prev. round
-    if (!cnt)
-	// no elements in row, no collisions
-	goto part2;
+
+    *collisionsNum = 0;
+    p = (ht_src + tid * NR_SLOTS * SLOT_LEN);
     p += xi_offset;
-    for (i = 0; i < cnt; i++, p += SLOT_LEN)
-	first_words[i] = (*(__global uchar *)p) & mask;
+    p += SLOT_LEN*localGroupId;
+    for (i = localGroupId; i < cnt; i += threadsPerRow, p += SLOT_LEN*threadsPerRow)
+      first_words[i] = (*(__global uchar *)p) & mask;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    
+    if (cnt == 0)
+  // no elements in row, no collisions
+  goto part2;  
     // find collisions
-    for (i = 0; i < cnt-1 && thCollNum < COLL_DATA_SIZE_PER_TH; i++)
+    for (i = 0; i < cnt-1; i++)
       {
-	uchar data_i = first_words[i];
-	uint collision = (tid << 10) | (i << 5) | (i + 1);
-	for (j = i+1; (j+4) < cnt;)
-	  {
-	      {
-		uint isColl = ((data_i == first_words[j]) ? 1 : 0);
-		if (isColl)
-		  {
-		    thCollNum++;
-		    uint index = atomic_inc(collisionsNum);
-		    collisionsData[index] = collision;
-		  }
-		collision++;
-		j++;
-	      }
-	      {
-		uint isColl = ((data_i == first_words[j]) ? 1 : 0);
-		if (isColl)
-		  {
-		    thCollNum++;
-		    uint index = atomic_inc(collisionsNum);
-		    collisionsData[index] = collision;
-		  }
-		collision++;
-		j++;
-	      }
-	      {
-		uint isColl = ((data_i == first_words[j]) ? 1 : 0);
-		if (isColl)
-		  {
-		    thCollNum++;
-		    uint index = atomic_inc(collisionsNum);
-		    collisionsData[index] = collision;
-		  }
-		collision++;
-		j++;
-	      }
-	      {
-		uint isColl = ((data_i == first_words[j]) ? 1 : 0);
-		if (isColl)
-		  {
-		    thCollNum++;
-		    uint index = atomic_inc(collisionsNum);
-		    collisionsData[index] = collision;
-		  }
-		collision++;
-		j++;
-	      }
-	  }
-	for (; j < cnt; j++)
-	  {
-	    uint isColl = ((data_i == first_words[j]) ? 1 : 0);
-	    if (isColl)
-	      {
-		thCollNum++;
-		uint index = atomic_inc(collisionsNum);
-		collisionsData[index] = collision;
-	      }
-	    collision++;
-	  }
+  uchar data_i = first_words[i];
+  uint collision = (localTid << 24) | (i << 12) | (i + 1 + localGroupId);
+  for (j = i + 1 + localGroupId; j < cnt; j += threadsPerRow)
+    {
+      if (data_i == first_words[j])
+        {
+    uint index = atomic_inc(collisionsNum);
+    if (index >= LDS_COLL_SIZE) {
+      atomic_dec(collisionsNum);
+      goto part2;
+    }
+    collisionsData[index] = collision;
+        }
+      collision += threadsPerRow;
+    }
       }
 
 part2:
     barrier(CLK_LOCAL_MEM_FENCE);
     uint totalCollisions = *collisionsNum;
-    for (uint index = tlid; index < totalCollisions; index += get_local_size(0))
+    for (uint index = get_local_id(0); index < totalCollisions; index += get_local_size(0))
       {
-	uint collision = collisionsData[index];
-	uint collisionThreadId = collision >> 10;
-	uint i = (collision >> 5) & 0x1F;
-	uint j = collision & 0x1F;
-	__global char *ptr = ht_src + collisionThreadId * NR_SLOTS * SLOT_LEN +
-	    xi_offset;
-	a = (__global ulong *)(ptr + i * SLOT_LEN);
-	b = (__global ulong *)(ptr + j * SLOT_LEN);
-	dropped_stor += xor_and_store(round, ht_dst, collisionThreadId, i, j,
-		a, b, rowCountersDst);
+  uint collision = collisionsData[index];
+  uint collisionThreadId = gid + (collision >> 24);
+  uint i = (collision >> 12) & 0xFFF;
+  uint j = collision & 0xFFF;
+  __global char *ptr = ht_src + collisionThreadId * NR_SLOTS * SLOT_LEN +
+      xi_offset;
+  a = (__global ulong *)(ptr + i * SLOT_LEN);
+  b = (__global ulong *)(ptr + j * SLOT_LEN);
+  dropped_stor += xor_and_store(round, ht_dst, collisionThreadId, i, j,
+    a, b, rowCountersDst);
       }
+  }
+      
 #ifdef ENABLE_DEBUG
     debug[tid * 2] = dropped_coll;
     debug[tid * 2 + 1] = dropped_stor;
@@ -663,11 +632,11 @@ __global__ void kernel_round ## N(__global char *ht_src, __global char *ht_dst, 
 	__global uint *rowCountersSrc, __global uint *rowCountersDst, \
        	__global uint *debug) \
 { \
-    __local uchar first_words_data[(NR_SLOTS)*THRD]; \
-    __local uint    collisionsData[COLL_DATA_SIZE_PER_TH * THRD];\
+    __local uchar first_words_data[NR_SLOTS*(THRD/THREADS_PER_ROW)]; \
+    __local uint    collisionsData[LDS_COLL_SIZE]; \
     __local uint    collisionsNum; \
     equihash_round(N, ht_src, ht_dst, debug, first_words_data, collisionsData, \
-	    &collisionsNum, rowCountersSrc, rowCountersDst); \
+	    &collisionsNum, rowCountersSrc, rowCountersDst,THREADS_PER_ROW); \
 }
 KERNEL_ROUND(1)
 KERNEL_ROUND(2)
@@ -685,11 +654,11 @@ void kernel_round8(__global char *ht_src, __global char *ht_dst,
 	__global uint *debug, __global sols_t *sols)
 {
     uint		tid = get_global_id(0);
-    __local uchar	first_words_data[(NR_SLOTS)*THRD];
-    __local uint    collisionsData[COLL_DATA_SIZE_PER_TH * THRD];
+    __local uchar	first_words_data[NR_SLOTS*(THRD/THREADS_PER_ROW)];
+    __local uint	collisionsData[LDS_COLL_SIZE];
     __local uint	collisionsNum;
     equihash_round(8, ht_src, ht_dst, debug, first_words_data, collisionsData,
-	    &collisionsNum, rowCountersSrc, rowCountersDst);
+	    &collisionsNum, rowCountersSrc, rowCountersDst,THREADS_PER_ROW);
     if (!tid)
 	sols->nr = sols->likely_invalids = 0;
 }
@@ -775,19 +744,29 @@ __global__
 void kernel_sols(__global char *ht0, __global char *ht1, __global sols_t *sols,
 	__global uint *rowCountersSrc, __global uint *rowCountersDst)
 {
-    uint		tid = get_global_id(0);
+    __local uint counters[64/THREADS_PER_ROW];
+    __local uint refs[NR_SLOTS*(64/THREADS_PER_ROW)];
+    __local uint data[NR_SLOTS*(64/THREADS_PER_ROW)];
+    __local uint collisionsNum;
+    __local ulong collisions[64*4];
+
+    uint globalTid = get_global_id(0) / THREADS_PER_ROW;
+    uint localTid = get_local_id(0) / THREADS_PER_ROW;
+    uint localGroupId = get_local_id(0) % THREADS_PER_ROW;
+    uint *refsPtr = &refs[NR_SLOTS*localTid];
+    uint *dataPtr = &data[NR_SLOTS*localTid];    
+    
     __global char	*htabs[2] = { ht0, ht1 };
-    __global char	*hcounters[2] = { (char *)rowCountersSrc, (char *)rowCountersDst };
+//    __global char	*hcounters[2] = { rowCountersSrc, rowCountersDst };
     uint		ht_i = (PARAM_K - 1) % 2; // table filled at last round
     uint		cnt;
     uint		xi_offset = xi_offset_for_round(PARAM_K - 1);
     uint		i, j;
-    __global char	*a, *b;
+    __global char	*p;
     uint		ref_i, ref_j;
     // it's ok for the collisions array to be so small, as if it fills up
     // the potential solutions are likely invalid (many duplicate inputs)
-    ulong		collisions;
-    uint		coll;
+//     ulong		collisions;
 #if NR_ROWS_LOG >= 16 && NR_ROWS_LOG <= 20
     // in the final hash table, we are looking for a match on both the bits
     // part of the previous PREFIX colliding bits, and the last PREFIX bits.
@@ -795,33 +774,55 @@ void kernel_sols(__global char *ht0, __global char *ht1, __global sols_t *sols,
 #else
 #error "unsupported NR_ROWS_LOG"
 #endif
-    a = htabs[ht_i] + tid * NR_SLOTS * SLOT_LEN;
+    
+  collisionsNum = 0;    
+  
+  for (uint chunk = 0; chunk < THREADS_PER_ROW; chunk++) {
+    uint tid = globalTid + NR_ROWS/THREADS_PER_ROW*chunk;
+    p = htabs[ht_i] + tid * NR_SLOTS * SLOT_LEN;
     uint rowIdx = tid/ROWS_PER_UINT;
     uint rowOffset = BITS_PER_ROW*(tid%ROWS_PER_UINT);
     cnt = (rowCountersSrc[rowIdx] >> rowOffset) & ROW_MASK;
     cnt = min(cnt, (uint)NR_SLOTS); // handle possible overflow in last round
-    coll = 0;
-    a += xi_offset;
-    for (i = 0; i < cnt; i++, a += SLOT_LEN)
+    p += xi_offset;
+    p += SLOT_LEN*localGroupId;
+
+    for (i = get_local_id(0); i < THRD/THREADS_PER_ROW; i += get_local_size(0))
+      counters[i] = 0;
+    for (i = localGroupId; i < cnt; i += THREADS_PER_ROW, p += SLOT_LEN*THREADS_PER_ROW) {
+      refsPtr[i] = *(__global uint *)(p - 4);
+      dataPtr[i] = (*(__global uint *)p) & mask;
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    
+    for (i = 0; i < cnt; i++)
       {
-	uint a_data = ((*(__global uint *)a) & mask);
-	ref_i = *(__global uint *)(a - 4);
-	for (j = i + 1, b = a + SLOT_LEN; j < cnt; j++, b += SLOT_LEN)
+	uint a_data = dataPtr[i];
+	ref_i = refsPtr[i];
+	for (j = i + 1 + localGroupId; j < cnt; j += THREADS_PER_ROW)
 	  {
-	    if (a_data == ((*(__global uint *)b) & mask))
+	    if (a_data == dataPtr[j])
 	      {
-		ref_j = *(__global uint *)(b - 4);
-		collisions = ((ulong)ref_i << 32) | ref_j;
-		goto exit1;
+          if (atomic_inc(&counters[localTid]) == 0)
+		        collisions[atomic_inc(&collisionsNum)] = ((ulong)ref_i << 32) | refsPtr[j];
+          goto part2;          
 	      }
 	  }
       }
-    return;
 
-exit1:
-    potential_sol(htabs, sols, collisions >> 32, collisions & 0xffffffff);
-
+part2:
+    continue;
+  }
+  
+    barrier(CLK_LOCAL_MEM_FENCE);
+    uint totalCollisions = collisionsNum;
+    if (get_local_id(0) < totalCollisions) {
+      ulong coll = collisions[get_local_id(0)];
+      potential_sol(htabs, sols, coll >> 32, coll & 0xffffffff);
+    }
 }
+
+
 
 struct __align__(64) c_context {
 	char* buf_ht[2], *buf_sols, *buf_dbg;
