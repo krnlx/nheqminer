@@ -10,9 +10,8 @@ cd nheqminer/Linux_cmake/nheqminer_cuda_sa && cmake . && make
 
 #speed on 1070
 
-[08:40:10][0x00007f98958e0740] Speed [300 sec]: 59.0751 I/s, 110.137 Sols/s
-[08:40:20][0x00007f98958e0740] Speed [300 sec]: 59.2031 I/s, 110.376 Sols/s
-[08:40:30][0x00007f98958e0740] Speed [300 sec]: 59.3131 I/s, 110.7 Sols/s
+[08:53:50][0x00007fe73631d740] Speed [300 sec]: 61.627 I/s, 115.119 Sols/s
+
 
 #run
 
