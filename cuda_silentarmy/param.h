@@ -13,7 +13,7 @@
 
 // Number of collision items to track, per thread
 #define THREADS_PER_ROW 16
-#define LDS_COLL_SIZE (NR_SLOTS * 24 * (64 / THREADS_PER_ROW))
+#define LDS_COLL_SIZE (NR_SLOTS * 20 * (64 / THREADS_PER_ROW))
 
 // Ratio of time of sleeping before rechecking if task is done (0-1)
 #define SLEEP_RECHECK_RATIO 0.60

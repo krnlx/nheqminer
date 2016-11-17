@@ -104,11 +104,15 @@ void kernel_init_ht(__global char *ht, __global uint *rowCounters)
 }
 
 
-__device__ uint ht_store(uint round, char *ht, uint i, ulong xi0, ulong xi1, ulong xi2, ulong xi3,uint *rowCounters)
+__device__ __forceinline__
+uint ht_store(uint round, __global char *ht, uint i,
+	ulong xi0, ulong xi1, ulong xi2, ulong xi3, __global uint *rowCounters)
 {
-	    uint    row;
+    uint    row;
     __global char       *p;
-    uint                cnt;
+   uint                cnt;
+   uint                tid = get_global_id(0);
+uint                tlid = get_local_id(0);
 #if NR_ROWS_LOG == 16
     if (!(round % 2))
 	row = (xi0 & 0xffff);
@@ -152,26 +156,46 @@ __device__ uint ht_store(uint round, char *ht, uint i, ulong xi0, ulong xi1, ulo
     uint xcnt = atomic_add(rowCounters + rowIdx, 1 << rowOffset);
     xcnt = (xcnt >> rowOffset) & ROW_MASK;
     cnt = xcnt;
-     if (cnt >= NR_SLOTS)
-       {
- 	// avoid overflows
- 	atomic_sub(rowCounters + rowIdx, 1 << rowOffset);
-  	return 1;
-       }
-
-    p += cnt * SLOT_LEN + xi_offset_for_round(round);
+    if (cnt >= NR_SLOTS)
+      {
+	// avoid overflows
+	atomic_sub(rowCounters + rowIdx, 1 << rowOffset);
+	return 1;
+      }
+    __global char       *pp = p + cnt * SLOT_LEN;
+    p = pp + xi_offset_for_round(round);
     // store "i" (always 4 bytes before Xi)
-    *(__global uint *)(p - 4) = i;
     if (round == 0 || round == 1)
       {
 	// store 24 bytes
+	ulong2 store0;
+	ulong2 store1;
+	store0.x=(ulong)i  | (ulong)i << 32;
+	store0.y=xi0;
+	*(__global ulong2 *)(pp)=store0;
+	store1.x=xi1;
+	store1.y=xi2;
+	*(__global ulong2 *)(pp+16)=store1;
+	
+/*
+	ulong2 store;
+	store.x=xi1;
+	store.y=xi2;
+	*(__global ulong2 *)(p + 8)=store;	
 	*(__global ulong *)(p + 0) = xi0;
-	*(__global ulong *)(p + 8) = xi1;
-	*(__global ulong *)(p + 16) = xi2;
+	*(__global uint *)(p - 4) = i;
+*/
+
       }
     else if (round == 2)
       {
 	// store 20 bytes
+/*
+	*(__global ulong *)(p - 4) = ((ulong)i) | (xi0 << 32);
+	*(__global ulong *)(p + 4) = (xi0 >> 32) | (xi1 << 32);
+	*(__global ulong *)(p + 12) = (xi1 >> 32) | (xi2 << 32);
+*/
+	*(__global uint *)(p - 4) = i;
 	*(__global uint *)(p + 0) = xi0;
 	*(__global ulong *)(p + 4) = (xi0 >> 32) | (xi1 << 32);
 	*(__global ulong *)(p + 12) = (xi1 >> 32) | (xi2 << 32);
@@ -179,6 +203,13 @@ __device__ uint ht_store(uint round, char *ht, uint i, ulong xi0, ulong xi1, ulo
     else if (round == 3)
       {
 	// store 16 bytes
+	//8 byte align	
+/*
+	*(__global ulong *)(p - 4) = ((ulong)i) | (xi0 << 32);
+	*(__global ulong *)(p + 4) = (xi0 >> 32) | (xi1 << 32);
+	*(__global uint *)(p + 12) = (xi1 >> 32);
+*/
+	*(__global uint *)(p - 4) = i;
 	*(__global uint *)(p + 0) = xi0;
 	*(__global ulong *)(p + 4) = (xi0 >> 32) | (xi1 << 32);
 	*(__global uint *)(p + 12) = (xi1 >> 32);
@@ -186,26 +217,48 @@ __device__ uint ht_store(uint round, char *ht, uint i, ulong xi0, ulong xi1, ulo
     else if (round == 4)
       {
 	// store 16 bytes
+
+	ulong2 store;
+        store.x=xi0;
+        store.y=xi1;
+        *(__global ulong2 *)(p + 0) = store;
+	*(__global uint *)(p - 4) = i;
+
+/*
+	*(__global uint *)(p - 4) = i;
 	*(__global ulong *)(p + 0) = xi0;
 	*(__global ulong *)(p + 8) = xi1;
+*/
       }
     else if (round == 5)
       {
 	// store 12 bytes
+	*(__global uint *)(p - 4) = i;
 	*(__global ulong *)(p + 0) = xi0;
 	*(__global uint *)(p + 8) = xi1;
       }
     else if (round == 6 || round == 7)
       {
 	// store 8 bytes
+
+	*(__global ulong *)(p - 4) = ((ulong)i) | (xi0 << 32);
+	*(__global uint *)(p + 4) = (xi0 >> 32);
+
+/*
+	*(__global uint *)(p - 4) = i;
 	*(__global uint *)(p + 0) = xi0;
 	*(__global uint *)(p + 4) = (xi0 >> 32);
+*/	
       }
     else if (round == 8)
       {
+	//4 byte align
+	*(__global uint *)(p - 4) = i;
 	// store 4 bytes
 	*(__global uint *)(p + 0) = xi0;
+
       }
+
     return 0;
 }
 
@@ -404,7 +457,7 @@ void kernel_round0(__global ulong *blake_state, __global char *ht,
 }
 
 
-__device__ ulong half_aligned_long(ulong *p, uint offset)
+__device__ __forceinline__ ulong half_aligned_long(ulong *p, uint offset)
 {
 	return
 		(((ulong)*(uint *)((char *)p + offset + 0)) << 0) |
@@ -414,7 +467,7 @@ __device__ ulong half_aligned_long(ulong *p, uint offset)
 /*
 ** Access a well-aligned int.
 */
-__device__ uint well_aligned_int(ulong *_p, uint offset)
+__device__ __forceinline__ uint well_aligned_int(ulong *_p, uint offset)
 {
 	char *p = (char *)_p;
 	return *(uint *)(p + offset);
@@ -430,7 +483,7 @@ __device__ uint well_aligned_int(ulong *_p, uint offset)
 **
 ** Return 0 if successfully stored, or 1 if the row overflowed.
 */
-__device__ 
+__device__ __forceinline__
 uint xor_and_store(uint round, __global char *ht_dst, uint row,
 	uint slot_a, uint slot_b, __global ulong *a, __global ulong *b,
 	__global uint *rowCounters)
@@ -514,7 +567,7 @@ uint xor_and_store(uint round, __global char *ht_dst, uint row,
 ** Execute one Equihash round. Read from ht_src, XOR colliding pairs of Xi,
 ** store them in ht_dst.
 */
-__device__
+__device__ __forceinline__
 void equihash_round(uint round,
   __global char *ht_src,
   __global char *ht_dst,
@@ -664,7 +717,7 @@ void kernel_round8(__global char *ht_src, __global char *ht_dst,
 }
 
 
-__device__ 
+__device__ __forceinline__
 uint expand_ref(__global char *ht, uint xi_offset, uint row, uint slot)
 {
     return *(__global uint *)(ht + row * NR_SLOTS * SLOT_LEN +
@@ -672,7 +725,7 @@ uint expand_ref(__global char *ht, uint xi_offset, uint row, uint slot)
 }
 
 
-__device__ 
+__device__ __forceinline__
 uint expand_refs(uint *ins, uint nr_inputs, __global char **htabs,
 	uint round)
 {
@@ -707,7 +760,7 @@ uint expand_refs(uint *ins, uint nr_inputs, __global char **htabs,
 /*
 ** Verify if a potential solution is in fact valid.
 */
-__device__ 
+__device__ __forceinline__
 void potential_sol(__global char **htabs, __global sols_t *sols,
 	uint ref0, uint ref1)
 {
