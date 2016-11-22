@@ -1,3 +1,4 @@
+#define THRD 32
 #define PARAM_N				200
 #define PARAM_K				9
 #define PREFIX                          (PARAM_N / (PARAM_K + 1))
@@ -6,14 +7,15 @@
 #define APX_NR_ELMS_LOG                 (PREFIX + 1)
 // Number of rows and slots is affected by this. 20 offers the best performance
 // but occasionally misses ~1% of solutions.
-#define NR_ROWS_LOG                     18
+#define NR_ROWS_LOG                     16
 
 // Setting this to 1 might make SILENTARMY faster, see TROUBLESHOOTING.md
 #define OPTIM_SIMPLIFY_ROUND		1
 
 // Number of collision items to track, per thread
 #define THREADS_PER_ROW 16
-#define LDS_COLL_SIZE (NR_SLOTS * 20 * (64 / THREADS_PER_ROW))
+#define ROWS_PER_WORKGROUP (THRD/THREADS_PER_ROW)
+#define LDS_COLL_SIZE (NR_SLOTS * 16 * (THRD / THREADS_PER_ROW))
 
 // Ratio of time of sleeping before rechecking if task is done (0-1)
 #define SLEEP_RECHECK_RATIO 0.60
@@ -35,10 +37,16 @@
 #if NR_ROWS_LOG == 16
 // #error "NR_ROWS_LOG = 16 is currently broken - do not use"
 #define OVERHEAD                        2
+#define COLLISION_TYPES_NUM             16u
+#define COLLISION_BUFFER_SIZE           16u
 #elif NR_ROWS_LOG == 18
-#define OVERHEAD                        3
+#define OVERHEAD                        4
+#define COLLISION_TYPES_NUM             4u
+#define COLLISION_BUFFER_SIZE           16u
 #elif NR_ROWS_LOG == 19
 #define OVERHEAD                        5
+#define COLLISION_TYPES_NUM             2u
+#define COLLISION_BUFFER_SIZE           16u
 #elif NR_ROWS_LOG == 20 && OPTIM_SIMPLIFY_ROUND
 #define OVERHEAD                        6
 #elif NR_ROWS_LOG == 20
